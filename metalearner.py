@@ -1,5 +1,5 @@
 import random
-# from typing import Dict
+from typing import Dict
 
 import numpy as np
 import torch
@@ -38,6 +38,7 @@ class MetaLearner:
             latent_dim=cfg.latent_dim,
             state_dim=state_dim,
             action_dim=action_dim,
+            use_prev_state=cfg.reward_decoder_use_prev_state,
         ).to(self.device)
         state_decoder = StateDecoder(
             latent_dim=cfg.latent_dim,
@@ -98,143 +99,170 @@ class MetaLearner:
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
-#     def _compute_returns_advantages(
-#         self,
-#         rewards: torch.Tensor,  # [T, 1]
-#         dones: torch.Tensor,  # [T, 1]
-#         values: torch.Tensor,  # [T, 1]
-#         next_value: torch.Tensor,  # [1, 1]
-#     ):
-#         t_steps = rewards.shape[0]
-#         advantages = torch.zeros_like(rewards)
-#         gae = torch.zeros(1, device=self.device)
+    def _compute_returns_advantages(
+        self,
+        rewards: torch.Tensor,  # [T, 1]
+        values: torch.Tensor,  # [T, 1]
+        next_value: torch.Tensor,  # [1, 1]
+        masks: torch.Tensor,  # [T, 1]
+        bad_masks: torch.Tensor,  # [T, 1]
+    ):
+        t_steps = rewards.shape[0]
+        advantages = torch.zeros_like(rewards)
+        gae = torch.zeros(1, device=self.device)
 
-#         for t in reversed(range(t_steps)):
-#             if t == t_steps - 1:
-#                 next_values = next_value
-#             else:
-#                 next_values = values[t + 1]
-#             non_terminal = 1.0 - dones[t]
-#             delta = rewards[t] + self.cfg.gamma * next_values * non_terminal - values[t]
-#             gae = delta + self.cfg.gamma * self.cfg.gae_lambda * non_terminal * gae
-#             advantages[t] = gae
+        for t in reversed(range(t_steps)):
+            next_values = next_value if t == t_steps - 1 else values[t + 1]
+            delta = rewards[t] + self.cfg.gamma * next_values * masks[t] - values[t]
+            gae = delta + self.cfg.gamma * self.cfg.gae_lambda * masks[t] * gae
+            gae = gae * bad_masks[t]
+            advantages[t] = gae
 
-#         returns = advantages + values
-#         return returns, advantages
+        returns = advantages + values
+        returns = returns * bad_masks + (1.0 - bad_masks) * values
+        return returns, advantages
 
     def _collect_rollout(self):
-#         state = self.env.reset()
-#         state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
+        state = self.env.reset()
+        state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
 
-#         with torch.no_grad():
-#             _, latent_mean, _, hidden = self.encoder.prior(batch_size=1, device=self.device)
+        with torch.no_grad():
+            latent_sample, _, _, hidden = self.encoder.prior(batch_size=1, device=self.device)
 
-#         states = []
-#         latents = []
-#         actions = []
-#         old_log_probs = []
-#         values = []
-#         rewards = []
-#         dones = []
+        states = []
+        latents = []
+        actions = []
+        old_log_probs = []
+        values = []
+        rewards = []
+        dones = []
+        masks = []
+        bad_masks = []
 
-#         prev_states_vae = []
-#         next_states_vae = []
-#         actions_vae = []
-#         rewards_vae = []
+        prev_states_vae = []
+        next_states_vae = []
+        actions_vae = []
+        rewards_vae = []
+        dones_vae = []
 
-#         rollout_return = 0.0
-#         rollout_success = 0
+        rollout_return = 0.0
+        rollout_success = 0
 
-#         for _ in range(self.cfg.rollout_len):
-#             latent_for_policy = latent_mean.detach()
-#             with torch.no_grad():
-#                 action, log_prob, _, value = self.policy.act(
-#                     state=state_tensor,
-#                     latent=latent_for_policy,
-#                     deterministic=False,
-#                 )
+        for _ in range(self.cfg.rollout_len):
+            latent_for_policy = latent_sample.detach()
+            with torch.no_grad():
+                action, log_prob, _, value = self.policy.act(
+                    state=state_tensor,
+                    latent=latent_for_policy,
+                    deterministic=False,
+                )
 
-#             action_i = int(action.item())
-#             next_state, reward, done, info = self.env.step(action_i)
+            action_i = int(action.item())
+            next_state, reward, done, info = self.env.step(action_i)
 
-#             next_state_tensor = torch.tensor(
-#                 next_state, dtype=torch.float32, device=self.device
-#             ).unsqueeze(0)
-#             action_tensor = torch.tensor([action_i], dtype=torch.long, device=self.device)
-#             reward_scalar = torch.tensor([reward], dtype=torch.float32, device=self.device)
-#             reward_tensor = reward_scalar.view(1, 1)
+            next_state_tensor = torch.tensor(
+                next_state, dtype=torch.float32, device=self.device
+            ).unsqueeze(0)
+            action_tensor = torch.tensor([action_i], dtype=torch.long, device=self.device)
+            reward_scalar = torch.tensor([reward], dtype=torch.float32, device=self.device)
+            reward_tensor = reward_scalar.view(1, 1)
+            done_tensor = torch.tensor(
+                [float(done)],
+                dtype=torch.float32,
+                device=self.device,
+            ).view(1, 1)
+            mask = torch.tensor(
+                [0.0 if done else 1.0],
+                dtype=torch.float32,
+                device=self.device,
+            )
+            bad_mask = torch.tensor(
+                [0.0 if info.get("bad_transition", False) else 1.0],
+                dtype=torch.float32,
+                device=self.device,
+            )
 
-#             states.append(state_tensor.squeeze(0))
-#             latents.append(latent_for_policy.squeeze(0))
-#             actions.append(action_tensor.squeeze(0))
-#             old_log_probs.append(log_prob.squeeze(0))
-#             values.append(value.squeeze(0))
-#             rewards.append(reward_scalar)
-#             dones.append(torch.tensor([float(done)], dtype=torch.float32, device=self.device))
+            states.append(state_tensor.squeeze(0))
+            latents.append(latent_for_policy.squeeze(0))
+            actions.append(action_tensor.squeeze(0))
+            old_log_probs.append(log_prob.squeeze(0))
+            values.append(value.squeeze(0))
+            rewards.append(reward_scalar)
+            dones.append(done_tensor.squeeze(0))
+            masks.append(mask)
+            bad_masks.append(bad_mask)
 
-#             prev_states_vae.append(state_tensor.squeeze(0))
-#             next_states_vae.append(next_state_tensor.squeeze(0))
-#             actions_vae.append(action_tensor.squeeze(0))
-#             rewards_vae.append(reward_scalar)
+            prev_states_vae.append(state_tensor.squeeze(0))
+            next_states_vae.append(next_state_tensor.squeeze(0))
+            actions_vae.append(action_tensor.squeeze(0))
+            rewards_vae.append(reward_scalar)
+            dones_vae.append(done_tensor.squeeze(0))
 
-#             with torch.no_grad():
-#                 _, latent_mean, _, hidden = self.encoder.step(
-#                     next_state=next_state_tensor,
-#                     action=action_tensor,
-#                     reward=reward_tensor,
-#                     hidden=hidden,
-#                 )
+            with torch.no_grad():
+                latent_sample, _, _, hidden = self.encoder.step(
+                    next_state=next_state_tensor,
+                    action=action_tensor,
+                    reward=reward_tensor,
+                    hidden=hidden,
+                    done=done_tensor,
+                    reset_on_done=self.cfg.reset_encoder_on_done,
+                )
 
-#             rollout_return += reward
-#             if info.get("reached_goal", False):
-#                 rollout_success += 1
+            rollout_return += reward
+            if info.get("reached_goal", False):
+                rollout_success += 1
 
-#             if done:
-#                 state = self.env.reset()
-#             else:
-#                 state = next_state
-#             state_tensor = torch.tensor(
-#                 state, dtype=torch.float32, device=self.device
-#             ).unsqueeze(0)
+            if done:
+                state = self.env.reset()
+            else:
+                state = next_state
+            state_tensor = torch.tensor(
+                state, dtype=torch.float32, device=self.device
+            ).unsqueeze(0)
 
-#         with torch.no_grad():
-#             next_value = self.policy.get_value(
-#                 state=state_tensor,
-#                 latent=latent_mean.detach(),
-#             )
+        with torch.no_grad():
+            next_value = self.policy.get_value(
+                state=state_tensor,
+                latent=latent_sample.detach(),
+            )
 
-#         states = torch.stack(states, dim=0)
-#         latents = torch.stack(latents, dim=0)
-#         actions = torch.stack(actions, dim=0)
-#         old_log_probs = torch.stack(old_log_probs, dim=0)
-#         values = torch.stack(values, dim=0)
-#         rewards = torch.stack(rewards, dim=0)
-#         dones = torch.stack(dones, dim=0)
+        states = torch.stack(states, dim=0)
+        latents = torch.stack(latents, dim=0)
+        actions = torch.stack(actions, dim=0)
+        old_log_probs = torch.stack(old_log_probs, dim=0)
+        values = torch.stack(values, dim=0)
+        rewards = torch.stack(rewards, dim=0)
+        dones = torch.stack(dones, dim=0)
+        masks = torch.stack(masks, dim=0).view(-1, 1)
+        bad_masks = torch.stack(bad_masks, dim=0).view(-1, 1)
 
-#         returns, advantages = self._compute_returns_advantages(
-#             rewards=rewards,
-#             dones=dones,
-#             values=values,
-#             next_value=next_value.squeeze(0),
-#         )
+        returns, advantages = self._compute_returns_advantages(
+            rewards=rewards,
+            values=values,
+            next_value=next_value.squeeze(0),
+            masks=masks,
+            bad_masks=bad_masks,
+        )
 
-#         rl_batch = {
-#             "states": states,
-#             "latents": latents,
-#             "actions": actions,
-#             "old_log_probs": old_log_probs,
-#             "returns": returns.detach(),
-#             "advantages": advantages.detach(),
-#         }
+        rl_batch = {
+            "states": states,
+            "latents": latents,
+            "actions": actions,
+            "old_log_probs": old_log_probs,
+            "returns": returns.detach(),
+            "advantages": advantages.detach(),
+        }
 
-#         vae_batch = {
-#             "prev_states": torch.stack(prev_states_vae, dim=0).detach(),
-#             "next_states": torch.stack(next_states_vae, dim=0).detach(),
-#             "actions": torch.stack(actions_vae, dim=0).detach(),
-#             "rewards": torch.stack(rewards_vae, dim=0).detach(),
-#         }
+        vae_batch = {
+            "prev_states": torch.stack(prev_states_vae, dim=0).detach(),
+            "next_states": torch.stack(next_states_vae, dim=0).detach(),
+            "actions": torch.stack(actions_vae, dim=0).detach(),
+            "rewards": torch.stack(rewards_vae, dim=0).detach(),
+            "dones": torch.stack(dones_vae, dim=0).detach(),
+            "reset_on_done": self.cfg.reset_encoder_on_done,
+        }
 
-#         return rl_batch, vae_batch, rollout_return, rollout_success
+        return rl_batch, vae_batch, rollout_return, rollout_success
 
     def train(self) -> None:
         returns = []
@@ -244,21 +272,23 @@ class MetaLearner:
             goal = self.env.reset_task()
             rl_batch, vae_batch, rollout_return, rollout_success = self._collect_rollout()
 
-            # policy_stats = self.algo.update(rl_batch)
-            # vae_stats = self.vae.update(**vae_batch)
+            policy_stats = self.algo.update(rl_batch)
+            vae_stats: Dict[str, float] = {}
+            for _ in range(self.cfg.vae_updates_per_rollout):
+                vae_stats = self.vae.update(**vae_batch)
 
-            # returns.append(rollout_return)
-            # successes.append(rollout_success)
+            returns.append(rollout_return)
+            successes.append(rollout_success)
 
-            # if update_idx % self.cfg.log_every == 0 or update_idx == 1:
-            #     avg_return = float(np.mean(returns[-self.cfg.log_every :]))
-            #     avg_success = float(np.mean(successes[-self.cfg.log_every :]))
-            #     print(
-            #         f"[update {update_idx:04d}] "
-            #         f"goal={goal} "
-            #         f"return={avg_return:.3f} "
-            #         f"success={avg_success:.2f} "
-            #         f"policy_loss={policy_stats['policy_loss']:.4f} "
-            #         f"value_loss={policy_stats['value_loss']:.4f} "
-            #         f"vae_loss={vae_stats['vae_loss']:.4f}"
-            #     )
+            if update_idx % self.cfg.log_every == 0 or update_idx == 1:
+                avg_return = float(np.mean(returns[-self.cfg.log_every :]))
+                avg_success = float(np.mean(successes[-self.cfg.log_every :]))
+                print(
+                    f"[update {update_idx:04d}] "
+                    f"goal={goal} "
+                    f"return={avg_return:.3f} "
+                    f"success={avg_success:.2f} "
+                    f"policy_loss={policy_stats['policy_loss']:.4f} "
+                    f"value_loss={policy_stats['value_loss']:.4f} "
+                    f"vae_loss={vae_stats['vae_loss']:.4f}"
+                )

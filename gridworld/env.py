@@ -44,48 +44,51 @@ class GridWorld:
         ]
         return self._rng.choice(choices)
 
-#     def reset_task(self, task: Optional[Tuple[int, int]] = None) -> Tuple[int, int]:
-#         if task is None:
-#             self.goal = self.sample_task()
-#         else:
-#             self.goal = (int(task[0]), int(task[1]))
-#         return self.goal
+    def reset_task(self, task: Optional[Tuple[int, int]] = None) -> Tuple[int, int]:
+        if task is None:
+            self.goal = self.sample_task()
+        else:
+            self.goal = (int(task[0]), int(task[1]))
+        return self.goal
 
-#     def reset(self) -> np.ndarray:
-#         self.pos = self.start
-#         self.steps = 0
-#         return self._obs()
+    def reset(self) -> np.ndarray:
+        self.pos = self.start
+        self.steps = 0
+        return self._obs()
 
-#     def _obs(self) -> np.ndarray:
-#         if self.size <= 1:
-#             return np.zeros(2, dtype=np.float32)
-#         return np.array(
-#             [self.pos[0] / (self.size - 1), self.pos[1] / (self.size - 1)],
-#             dtype=np.float32,
-#         )
+    def _obs(self) -> np.ndarray:
+        if self.size <= 1:
+            return np.zeros(2, dtype=np.float32)
+        return np.array(
+            [self.pos[0] / (self.size - 1), self.pos[1] / (self.size - 1)],
+            dtype=np.float32,
+        )
 
-#     def step(self, action: int):
-#         x, y = self.pos
-#         if action == 0:  # up
-#             y = min(y + 1, self.size - 1)
-#         elif action == 1:  # right
-#             x = min(x + 1, self.size - 1)
-#         elif action == 2:  # down
-#             y = max(y - 1, 0)
-#         elif action == 3:  # left
-#             x = max(x - 1, 0)
-#         else:
-#             raise ValueError(f"Invalid action: {action}")
+    def step(self, action: int):
+        x, y = self.pos
+        if action == 0:  # up
+            y = min(y + 1, self.size - 1)
+        elif action == 1:  # right
+            x = min(x + 1, self.size - 1)
+        elif action == 2:  # down
+            y = max(y - 1, 0)
+        elif action == 3:  # left
+            x = max(x - 1, 0)
+        else:
+            raise ValueError(f"Invalid action: {action}")
 
-#         self.pos = (x, y)
-#         self.steps += 1
+        self.pos = (x, y)
+        self.steps += 1
 
-#         reached_goal = self.pos == self.goal
-#         done = reached_goal or self.steps >= self.max_steps
-#         reward = self.goal_reward if reached_goal else self.step_penalty
+        reached_goal = self.pos == self.goal
+        time_limit_reached = self.steps >= self.max_steps
+        done = reached_goal or time_limit_reached
+        reward = self.goal_reward if reached_goal else self.step_penalty
 
-#         info = {
-#             "goal": self.goal,
-#             "reached_goal": reached_goal,
-#         }
-#         return self._obs(), float(reward), bool(done), info
+        info = {
+            "goal": self.goal,
+            "reached_goal": reached_goal,
+            "time_limit_reached": time_limit_reached,
+            "bad_transition": time_limit_reached and not reached_goal,
+        }
+        return self._obs(), float(reward), bool(done), info

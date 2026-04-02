@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-# import torch.nn.functional as F
+import torch.nn.functional as F
 
 
 class VariBadEncoder(nn.Module):
@@ -34,81 +34,95 @@ class VariBadEncoder(nn.Module):
         self.mu_head = nn.Linear(hidden_dim, latent_dim)
         self.logvar_head = nn.Linear(hidden_dim, latent_dim)
 
-#     @staticmethod
-#     def reparameterize(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
-#         std = torch.exp(0.5 * logvar)
-#         eps = torch.randn_like(std)
-#         return mu + eps * std
+    @staticmethod
+    def reparameterize(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
 
-#     def prior(self, batch_size: int, device: torch.device):
-#         hidden = torch.zeros(batch_size, self.hidden_dim, device=device)
-#         mu = self.mu_head(hidden)
-#         logvar = self.logvar_head(hidden)
-#         sample = self.reparameterize(mu, logvar)
-#         return sample, mu, logvar, hidden
+    def prior(self, batch_size: int, device: torch.device):
+        hidden = torch.zeros(batch_size, self.hidden_dim, device=device)
+        mu = self.mu_head(hidden)
+        logvar = self.logvar_head(hidden)
+        sample = self.reparameterize(mu, logvar)
+        return sample, mu, logvar, hidden
 
-#     def step(
-#         self,
-#         next_state: torch.Tensor,
-#         action: torch.Tensor,
-#         reward: torch.Tensor,
-#         hidden: torch.Tensor,
-#     ):
-#         if next_state.dim() == 1:
-#             next_state = next_state.unsqueeze(0)
-#         if reward.dim() == 1:
-#             reward = reward.unsqueeze(-1)
-#         if action.dim() > 1:
-#             action = action.squeeze(-1)
-#         action = action.long()
+    def step(
+        self,
+        next_state: torch.Tensor,
+        action: torch.Tensor,
+        reward: torch.Tensor,
+        hidden: torch.Tensor,
+        done: torch.Tensor | None = None,
+        reset_on_done: bool = False,
+    ):
+        if next_state.dim() == 1:
+            next_state = next_state.unsqueeze(0)
+        if reward.dim() == 1:
+            reward = reward.unsqueeze(-1)
+        if action.dim() > 1:
+            action = action.squeeze(-1)
+        action = action.long()
 
-#         hs = F.relu(self.state_encoder(next_state))
-#         ha = F.relu(self.action_encoder(action))
-#         hr = F.relu(self.reward_encoder(reward))
-#         gru_in = torch.cat([hs, ha, hr], dim=-1)
+        if done is not None and reset_on_done:
+            if done.dim() > 1:
+                done = done.squeeze(-1)
+            done = done.float().view(-1, 1)
+            hidden = hidden * (1.0 - done)
 
-#         hidden = self.gru(gru_in, hidden)
-#         mu = self.mu_head(hidden)
-#         logvar = self.logvar_head(hidden)
-#         sample = self.reparameterize(mu, logvar)
-#         return sample, mu, logvar, hidden
+        hs = F.relu(self.state_encoder(next_state))
+        ha = F.relu(self.action_encoder(action))
+        hr = F.relu(self.reward_encoder(reward))
+        gru_in = torch.cat([hs, ha, hr], dim=-1)
 
-#     def encode_sequence(
-#         self,
-#         next_states: torch.Tensor,
-#         actions: torch.Tensor,
-#         rewards: torch.Tensor,
-#     ):
-#         """
-#         next_states: [T, B, state_dim]
-#         actions: [T, B]
-#         rewards: [T, B, 1]
-#         Returns latent tensors with length T+1 (including prior).
-#         """
-#         t_steps, batch_size, _ = next_states.shape
-#         device = next_states.device
+        hidden = self.gru(gru_in, hidden)
+        mu = self.mu_head(hidden)
+        logvar = self.logvar_head(hidden)
+        sample = self.reparameterize(mu, logvar)
+        return sample, mu, logvar, hidden
 
-#         sample, mu, logvar, hidden = self.prior(batch_size=batch_size, device=device)
-#         samples = [sample]
-#         means = [mu]
-#         logvars = [logvar]
-#         hiddens = [hidden]
+    def encode_sequence(
+        self,
+        next_states: torch.Tensor,
+        actions: torch.Tensor,
+        rewards: torch.Tensor,
+        dones: torch.Tensor | None = None,
+        reset_on_done: bool = False,
+    ):
+        """
+        next_states: [T, B, state_dim]
+        actions: [T, B]
+        rewards: [T, B, 1]
+        dones: [T, B] or [T, B, 1]
+        Returns latent tensors with length T+1 (including prior).
+        """
+        t_steps, batch_size, _ = next_states.shape
+        device = next_states.device
 
-#         for t in range(t_steps):
-#             sample, mu, logvar, hidden = self.step(
-#                 next_state=next_states[t],
-#                 action=actions[t],
-#                 reward=rewards[t],
-#                 hidden=hidden,
-#             )
-#             samples.append(sample)
-#             means.append(mu)
-#             logvars.append(logvar)
-#             hiddens.append(hidden)
+        sample, mu, logvar, hidden = self.prior(batch_size=batch_size, device=device)
+        samples = [sample]
+        means = [mu]
+        logvars = [logvar]
+        hiddens = [hidden]
 
-#         return (
-#             torch.stack(samples, dim=0),
-#             torch.stack(means, dim=0),
-#             torch.stack(logvars, dim=0),
-#             torch.stack(hiddens, dim=0),
-#         )
+        for t in range(t_steps):
+            done_t = dones[t] if dones is not None else None
+            sample, mu, logvar, hidden = self.step(
+                next_state=next_states[t],
+                action=actions[t],
+                reward=rewards[t],
+                hidden=hidden,
+                done=done_t,
+                reset_on_done=reset_on_done,
+            )
+            samples.append(sample)
+            means.append(mu)
+            logvars.append(logvar)
+            hiddens.append(hidden)
+
+        return (
+            torch.stack(samples, dim=0),
+            torch.stack(means, dim=0),
+            torch.stack(logvars, dim=0),
+            torch.stack(hiddens, dim=0),
+        )

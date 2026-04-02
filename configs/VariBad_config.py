@@ -30,6 +30,9 @@ class Config:
 
     kl_weight: float = 0.1
     state_loss_coef: float = 0.5
+    vae_updates_per_rollout: int = 4
+    reset_encoder_on_done: bool = False
+    reward_decoder_use_prev_state: bool = True
 
     log_every: int = 10
     device: str = "cpu"
