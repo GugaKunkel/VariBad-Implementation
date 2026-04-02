@@ -4,8 +4,8 @@ import random
 import numpy as np
 import torch
 
-# from algorithms import A2C, PPO
-# from architecture import ActorCritic, RewardDecoder, StateDecoder, VariBadEncoder, VariBadVAE
+from algorithms import A2C, PPO
+from architecture import ActorCritic, RewardDecoder, StateDecoder, VariBadEncoder, VariBadVAE
 from gridworld import GridWorld
 from configs.VariBad_config import Config
 
@@ -22,65 +22,65 @@ class MetaLearner:
             step_penalty=cfg.step_penalty,
             goal_reward=cfg.goal_reward,
         )
-#         self.env.seed(cfg.seed)
+        self.env.seed(cfg.seed)
 
-#         state_dim = self.env.observation_dim
-#         action_dim = self.env.action_dim
+        state_dim = self.env.observation_dim
+        action_dim = self.env.action_dim
 
-#         self.encoder = VariBadEncoder(
-#             state_dim=state_dim,
-#             action_dim=action_dim,
-#             latent_dim=cfg.latent_dim,
-#             hidden_dim=cfg.encoder_hidden_dim,
-#         ).to(self.device)
+        self.encoder = VariBadEncoder(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            latent_dim=cfg.latent_dim,
+            hidden_dim=cfg.encoder_hidden_dim,
+        ).to(self.device)
 
-#         reward_decoder = RewardDecoder(
-#             latent_dim=cfg.latent_dim,
-#             state_dim=state_dim,
-#             action_dim=action_dim,
-#         ).to(self.device)
-#         state_decoder = StateDecoder(
-#             latent_dim=cfg.latent_dim,
-#             state_dim=state_dim,
-#             action_dim=action_dim,
-#         ).to(self.device)
-#         self.vae = VariBadVAE(
-#             encoder=self.encoder,
-#             reward_decoder=reward_decoder,
-#             state_decoder=state_decoder,
-#             lr=cfg.vae_lr,
-#             kl_weight=cfg.kl_weight,
-#             state_loss_coef=cfg.state_loss_coef,
-#         )
+        reward_decoder = RewardDecoder(
+            latent_dim=cfg.latent_dim,
+            state_dim=state_dim,
+            action_dim=action_dim,
+        ).to(self.device)
+        state_decoder = StateDecoder(
+            latent_dim=cfg.latent_dim,
+            state_dim=state_dim,
+            action_dim=action_dim,
+        ).to(self.device)
+        self.vae = VariBadVAE(
+            encoder=self.encoder,
+            reward_decoder=reward_decoder,
+            state_decoder=state_decoder,
+            lr=cfg.vae_lr,
+            kl_weight=cfg.kl_weight,
+            state_loss_coef=cfg.state_loss_coef,
+        )
 
-#         self.policy = ActorCritic(
-#             state_dim=state_dim,
-#             latent_dim=cfg.latent_dim,
-#             action_dim=action_dim,
-#             hidden_dim=cfg.policy_hidden_dim,
-#         ).to(self.device)
+        self.policy = ActorCritic(
+            state_dim=state_dim,
+            latent_dim=cfg.latent_dim,
+            action_dim=action_dim,
+            hidden_dim=cfg.policy_hidden_dim,
+        ).to(self.device)
 
-#         if cfg.algo == "ppo":
-#             self.algo = PPO(
-#                 policy=self.policy,
-#                 lr=cfg.policy_lr,
-#                 clip_ratio=cfg.ppo_clip_ratio,
-#                 epochs=cfg.ppo_epochs,
-#                 minibatch_size=cfg.ppo_minibatch_size,
-#                 value_coef=cfg.value_coef,
-#                 entropy_coef=cfg.entropy_coef,
-#                 max_grad_norm=cfg.max_grad_norm,
-#             )
-#         elif cfg.algo == "a2c":
-#             self.algo = A2C(
-#                 policy=self.policy,
-#                 lr=cfg.policy_lr,
-#                 value_coef=cfg.value_coef,
-#                 entropy_coef=cfg.entropy_coef,
-#                 max_grad_norm=cfg.max_grad_norm,
-#             )
-#         else:
-#             raise ValueError(f"Unsupported algo: {cfg.algo}")
+        if cfg.algo == "ppo":
+            self.algo = PPO(
+                policy=self.policy,
+                lr=cfg.policy_lr,
+                clip_ratio=cfg.ppo_clip_ratio,
+                epochs=cfg.ppo_epochs,
+                minibatch_size=cfg.ppo_minibatch_size,
+                value_coef=cfg.value_coef,
+                entropy_coef=cfg.entropy_coef,
+                max_grad_norm=cfg.max_grad_norm,
+            )
+        elif cfg.algo == "a2c":
+            self.algo = A2C(
+                policy=self.policy,
+                lr=cfg.policy_lr,
+                value_coef=cfg.value_coef,
+                entropy_coef=cfg.entropy_coef,
+                max_grad_norm=cfg.max_grad_norm,
+            )
+        else:
+            raise ValueError(f"Unsupported algo: {cfg.algo}")
 
     #TODO: Might get moved to a utils file when DQN is implemented
     @staticmethod
@@ -122,7 +122,7 @@ class MetaLearner:
 #         returns = advantages + values
 #         return returns, advantages
 
-#     def _collect_rollout(self):
+    def _collect_rollout(self):
 #         state = self.env.reset()
 #         state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
 
@@ -236,29 +236,29 @@ class MetaLearner:
 
 #         return rl_batch, vae_batch, rollout_return, rollout_success
 
-#     def train(self) -> None:
-#         returns = []
-#         successes = []
+    def train(self) -> None:
+        returns = []
+        successes = []
 
-#         for update_idx in range(1, self.cfg.updates + 1):
-#             goal = self.env.reset_task()
-#             rl_batch, vae_batch, rollout_return, rollout_success = self._collect_rollout()
+        for update_idx in range(1, self.cfg.updates + 1):
+            goal = self.env.reset_task()
+            rl_batch, vae_batch, rollout_return, rollout_success = self._collect_rollout()
 
-#             policy_stats = self.algo.update(rl_batch)
-#             vae_stats = self.vae.update(**vae_batch)
+            # policy_stats = self.algo.update(rl_batch)
+            # vae_stats = self.vae.update(**vae_batch)
 
-#             returns.append(rollout_return)
-#             successes.append(rollout_success)
+            # returns.append(rollout_return)
+            # successes.append(rollout_success)
 
-#             if update_idx % self.cfg.log_every == 0 or update_idx == 1:
-#                 avg_return = float(np.mean(returns[-self.cfg.log_every :]))
-#                 avg_success = float(np.mean(successes[-self.cfg.log_every :]))
-#                 print(
-#                     f"[update {update_idx:04d}] "
-#                     f"goal={goal} "
-#                     f"return={avg_return:.3f} "
-#                     f"success={avg_success:.2f} "
-#                     f"policy_loss={policy_stats['policy_loss']:.4f} "
-#                     f"value_loss={policy_stats['value_loss']:.4f} "
-#                     f"vae_loss={vae_stats['vae_loss']:.4f}"
-#                 )
+            # if update_idx % self.cfg.log_every == 0 or update_idx == 1:
+            #     avg_return = float(np.mean(returns[-self.cfg.log_every :]))
+            #     avg_success = float(np.mean(successes[-self.cfg.log_every :]))
+            #     print(
+            #         f"[update {update_idx:04d}] "
+            #         f"goal={goal} "
+            #         f"return={avg_return:.3f} "
+            #         f"success={avg_success:.2f} "
+            #         f"policy_loss={policy_stats['policy_loss']:.4f} "
+            #         f"value_loss={policy_stats['value_loss']:.4f} "
+            #         f"vae_loss={vae_stats['vae_loss']:.4f}"
+            #     )

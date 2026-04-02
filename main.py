@@ -3,7 +3,7 @@ from configs.VariBad_config import Config
 from metalearner import MetaLearner
 
 #TODO: Come back to these arguments to make sure we have whats needed for VariBad,
-# TODO: Implement args for running VariBad on the mountaincart discrete evironment
+#TODO: Implement args for running VariBad on the mountaincart discrete evironment
 #TODO: Implement arge for running normal DQN on both evironments as a baseline
 def parse_args():
     parser = argparse.ArgumentParser(description="VariBAD on GridWorld")

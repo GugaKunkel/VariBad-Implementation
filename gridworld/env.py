@@ -1,6 +1,6 @@
 import random
 from typing import Optional, Tuple
-# import numpy as np
+import numpy as np
 
 
 class GridWorld:
@@ -26,23 +26,23 @@ class GridWorld:
         self.pos = self.start
         self.steps = 0
 
-#     def seed(self, seed: int) -> None:
-#         self._rng.seed(seed)
-#         np.random.seed(seed)
+    def seed(self, seed: int) -> None:
+        self._rng.seed(seed)
+        np.random.seed(seed)
 
-def sample_task(self) -> Tuple[int, int]:
-    choices = [
-        (x, y)
-        for x in range(self.size)
-        for y in range(self.size)
-        if (x, y) != self.start and (x, y) not in [
-            (self.start[0] + dx, self.start[1] + dy)
-            for dx in [-1, 0, 1]
-            for dy in [-1, 0, 1]
-            if (dx, dy) != (0, 0)
+    def sample_task(self) -> Tuple[int, int]:
+        choices = [
+            (x, y)
+            for x in range(self.size)
+            for y in range(self.size)
+            if (x, y) != self.start and (x, y) not in [
+                (self.start[0] + dx, self.start[1] + dy)
+                for dx in [-1, 0, 1]
+                for dy in [-1, 0, 1]
+                if (dx, dy) != (0, 0)
+            ]
         ]
-    ]
-    return self._rng.choice(choices)
+        return self._rng.choice(choices)
 
 #     def reset_task(self, task: Optional[Tuple[int, int]] = None) -> Tuple[int, int]:
 #         if task is None:
