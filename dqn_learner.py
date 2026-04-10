@@ -35,6 +35,7 @@ class DQNLearner:
         self.train_frequency = args.train_frequency
         self.log_interval = args.log_interval
         self.vis_interval = args.vis_interval
+        self.save_interval = args.save_interval
         self.max_rollouts_per_task = args.max_rollouts_per_task
 
         timestamp = datetime.datetime.now().strftime("%H_%M_%S__%d_%m")
@@ -42,6 +43,8 @@ class DQNLearner:
         algo_name = getattr(args, "algo_name", "dqn").lower()
         self.run_dir = os.path.join(project_root, "logs", algo_name, f"{args.env_name}__{self.seed}__{timestamp}")
         os.makedirs(self.run_dir, exist_ok=True)
+        self.model_dir = os.path.join(self.run_dir, "models")
+        os.makedirs(self.model_dir, exist_ok=True)
         self.writer = SummaryWriter(self.run_dir)
         self.writer.add_text(
             "hyperparameters",
@@ -74,6 +77,20 @@ class DQNLearner:
             n_envs=args.num_processes,
             handle_timeout_termination=False,
         )
+
+    def _save_checkpoint(self, global_step):
+        ckpt = {
+            "global_step": int(global_step),
+            "q_network": self.q_network.state_dict(),
+            "target_network": self.target_network.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "seed": int(self.seed),
+        }
+        latest_path = os.path.join(self.model_dir, "latest.pt")
+        step_path = os.path.join(self.model_dir, f"dqn_step_{int(global_step)}.pt")
+        torch.save(ckpt, latest_path)
+        torch.save(ckpt, step_path)
+        print(f"[DQN] Saved checkpoint: {step_path}")
     
     def _linear_schedule(self, start_e: float, end_e: float, duration: int, t: int):
         if duration <= 0:
@@ -204,8 +221,15 @@ class DQNLearner:
                     f"eps={epsilon:.3f} | buffer={self.rb.size()} | loss={loss_str} | SPS={sps}"
                 )
 
-            if (global_step + 1) % self.vis_interval == 0:
+            log_trigger = ((global_step + 1) % self.log_interval == 0)
+            vis_trigger = ((global_step + 1) % self.vis_interval == 0)
+            save_trigger = log_trigger or vis_trigger
+
+            if vis_trigger:
                 self._visualise_trajectories(global_step + 1, num_episodes=3)
+
+            if save_trigger:
+                self._save_checkpoint(global_step + 1)
         
         self.envs.close()
         self.writer.close()
