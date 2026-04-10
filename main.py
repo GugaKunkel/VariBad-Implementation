@@ -6,14 +6,14 @@ from configs import args_grid_varibad, args_grid_dqn
 from metalearner import MetaLearner
 from dqn_learner import DQNLearner
 
-def main(experiment: str):
+def main(experiment: str, rest_args=None):
     experiment = experiment.lower()
     if experiment == "varibad":
-        args = args_grid_varibad.get_args(None)
+        args = args_grid_varibad.get_args(rest_args)
         learner = MetaLearner(args)
         learner.train()
     elif experiment == "dqn":
-        args = args_grid_dqn.get_args(None)
+        args = args_grid_dqn.get_args(rest_args)
         learner = DQNLearner(args)
         learner.train()
     else:
@@ -22,5 +22,5 @@ def main(experiment: str):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("experiment", choices=["varibad", "dqn"], help="Which experiment to run")
-    parsed_args = parser.parse_args()
-    main(parsed_args.experiment)
+    parsed_args, rest_args = parser.parse_known_args()
+    main(parsed_args.experiment, rest_args)

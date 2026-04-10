@@ -13,7 +13,7 @@ def get_args(rest_args):
     parser.add_argument('--env_name', default='GridNavi-v0', help='environment to train on')
 
     # other hyperparameters
-    parser.add_argument('--lr_policy', type=float, default=0.0025, help='learning rate (default: 0025)')
+    parser.add_argument('--lr', type=float, default=0.0025, help='learning rate (default: 0025)')
     parser.add_argument('--num_processes', type=int, default=16, help='how many training CPU processes / parallel environments to use (default: 16)')
     parser.add_argument('--size_buffer', type=int, default=100000, help='how many trajectories (!) to keep in buffer')
     parser.add_argument('--gamma', type=float, default=0.95, help='discount factor')
