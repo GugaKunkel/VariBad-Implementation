@@ -25,7 +25,7 @@ def get_args(rest_args):
     parser.add_argument('--exploration_fraction', type=float, default=0.5, help='fraction of total training period over which the exploration rate is annealed')
     parser.add_argument('--learning_starts', type=int, default=10000, help='number of steps before learning starts')
     parser.add_argument('--train_frequency', type=int, default=10, help='number of steps between each training update')
-    parser.add_argument('--reset_task_on_episode', type=boolean_argument, default=True, help='if True, call env.unwrapped.reset_task() on every env reset when available (needed for GridNavi task randomization)')
+    parser.add_argument('--reset_task_on_episode', type=boolean_argument, default=False, help='if True, resample task every episode; if False, keep task fixed for --max_rollouts_per_task episodes (VariBad-style)')
     parser.add_argument('--seed', type=int, default=73)
 
     # --- OTHERS ---

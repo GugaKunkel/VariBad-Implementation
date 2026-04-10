@@ -17,7 +17,7 @@ from utils.cleanrl_buffers import ReplayBuffer
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-class DQNLearner:
+class RecurrentDQNLearner:
     def __init__(self, args):
         self.args = args
         self.seed = args.seed
@@ -34,6 +34,7 @@ class DQNLearner:
         self.log_interval = args.log_interval
         self.vis_interval = args.vis_interval
         self.max_rollouts_per_task = args.max_rollouts_per_task
+        self.rnn_hidden_size = args.rnn_hidden_size
 
         self.run_dir = f"runs/{args.env_name}__{self.seed}__{int(time.time())}"
         self.writer = SummaryWriter(self.run_dir)
@@ -55,10 +56,11 @@ class DQNLearner:
             ]
         )
         
-        self.q_network = QNetwork(self.envs).to(device)
+        self.q_network = RecurrentQNetwork(self.envs, hidden_size=self.rnn_hidden_size).to(device)
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=args.lr)
-        self.target_network = QNetwork(self.envs).to(device)
+        self.target_network = RecurrentQNetwork(self.envs, hidden_size=self.rnn_hidden_size).to(device)
         self.target_network.load_state_dict(self.q_network.state_dict())
+        self.hidden_state = self._zero_hidden(args.num_processes)
         
         self.rb = ReplayBuffer(
             args.size_buffer,
@@ -83,9 +85,13 @@ class DQNLearner:
                 self.writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
                 self.writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
+    def _zero_hidden(self, batch_size):
+        return torch.zeros(1, batch_size, self.rnn_hidden_size, device=device)
+
     def _greedy_actions(self, obs):
         with torch.no_grad():
-            q_values = self.q_network(torch.as_tensor(obs, dtype=torch.float32, device=device))
+            obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device)
+            q_values, self.hidden_state = self.q_network(obs_t, self.hidden_state)
             return torch.argmax(q_values, dim=1).cpu().numpy()
 
     def _visualise_trajectories(self, global_step, num_episodes=3):
@@ -99,11 +105,15 @@ class DQNLearner:
         episode_goals = []
         for ep in range(num_episodes):
             obs, _ = eval_env.reset(seed=self.seed + global_step + ep)
+            eval_hidden = self._zero_hidden(1)
             done = False
             observations = [torch.tensor(obs.copy(), dtype=torch.float32).unsqueeze(0)]
 
             while not done:
-                action = self._greedy_actions(obs[None, ...])[0]
+                obs_t = torch.as_tensor(obs[None, ...], dtype=torch.float32, device=device)
+                with torch.no_grad():
+                    q_values, eval_hidden = self.q_network(obs_t, eval_hidden)
+                    action = torch.argmax(q_values, dim=1).item()
                 next_obs, reward, terminated, truncated, _ = eval_env.step(action)
                 observations.append(torch.tensor(next_obs.copy(), dtype=torch.float32).unsqueeze(0))
                 obs = next_obs
@@ -133,10 +143,11 @@ class DQNLearner:
             episode_beliefs=None,
         )
         eval_env.close()
-        print(f"[DQN] Saved trajectory plot: {self.run_dir}/{global_step}_behaviour")
+        print(f"[RDQN] Saved trajectory plot: {self.run_dir}/{global_step}_behaviour")
     
     def train(self):
         obs, _ = self.envs.reset(seed=self.seed)
+        self.hidden_state = self._zero_hidden(self.envs.num_envs)
         start_time = time.time()
         last_loss = None
         
@@ -147,13 +158,20 @@ class DQNLearner:
                 int(self.exploration_fraction * self.total_timesteps),
                 global_step,
             )
+
+            # Always update recurrent hidden state from current observation.
+            greedy_actions = self._greedy_actions(obs)
             if random.random() < epsilon:
                 actions = np.array([self.envs.single_action_space.sample() for _ in range(self.envs.num_envs)])
             else:
-                actions = self._greedy_actions(obs)
+                actions = greedy_actions
             
             next_obs, rewards, terminations, truncations, infos = self.envs.step(actions)
             self._maybe_log_episode(infos, global_step)
+            done_mask = np.logical_or(terminations, truncations)
+            if np.any(done_mask):
+                done_t = torch.as_tensor(done_mask, dtype=torch.bool, device=device)
+                self.hidden_state[:, done_t, :] = 0.0
             
             real_next_obs = next_obs.copy()
             if isinstance(infos, dict) and "final_observation" in infos:
@@ -169,10 +187,12 @@ class DQNLearner:
                 if global_step % self.train_frequency == 0:
                     data = self.rb.sample(self.batch_size)
                     with torch.no_grad():
-                        target_max, _ = self.target_network(data.next_observations).max(dim=1)
+                        target_q, _ = self.target_network(data.next_observations, None)
+                        target_max, _ = target_q.max(dim=1)
                         td_target = data.rewards.flatten() + self.gamma * target_max * (1 - data.dones.flatten())
                     
-                    old_val = self.q_network(data.observations).gather(1, data.actions.long()).squeeze()
+                    q_values, _ = self.q_network(data.observations, None)
+                    old_val = q_values.gather(1, data.actions.long()).squeeze()
                     loss = F.mse_loss(td_target, old_val)
                     last_loss = float(loss.item())
                     
@@ -194,7 +214,7 @@ class DQNLearner:
                 sps = int((global_step + 1) / max(time.time() - start_time, 1e-8))
                 loss_str = f"{last_loss:.5f}" if last_loss is not None else "n/a"
                 print(
-                    f"[DQN] Step {global_step + 1}/{self.total_timesteps} | "
+                    f"[RDQN] Step {global_step + 1}/{self.total_timesteps} | "
                     f"eps={epsilon:.3f} | buffer={self.rb.size()} | loss={loss_str} | SPS={sps}"
                 )
 
@@ -238,19 +258,28 @@ def make_env(env_id, seed, reset_task_on_episode, episodes_per_task):
     return thunk
 
 # TODO: Might need to adjust this to improve learning performance (e.g. add more layers, or use a different architecture)
-class QNetwork(nn.Module):
-    def __init__(self, envs):
+class RecurrentQNetwork(nn.Module):
+    def __init__(self, envs, hidden_size=64):
         super().__init__()
         obs_dim = int(np.array(envs.single_observation_space.shape).prod())
         n_actions = envs.single_action_space.n
-        self.network = nn.Sequential(
-            nn.Linear(obs_dim, 120),
+        self.fc = nn.Linear(obs_dim, 120)
+        self.gru = nn.GRU(input_size=120, hidden_size=hidden_size, batch_first=True)
+        self.head = nn.Sequential(
             nn.ReLU(),
-            nn.Linear(120, 84),
+            nn.Linear(hidden_size, 84),
             nn.ReLU(),
             nn.Linear(84, n_actions),
         )
 
-    def forward(self, x):
-        x = x.float().view(x.shape[0], -1)
-        return self.network(x)
+    def forward(self, x, hidden_state=None):
+        # Supports [B, D] and [B, T, D]; returns Q-values for the final time index.
+        x = x.float()
+        if x.dim() == 2:
+            x = x.unsqueeze(1)
+        b, t = x.shape[0], x.shape[1]
+        x = x.view(b, t, -1)
+        x = F.relu(self.fc(x))
+        out, next_hidden = self.gru(x, hidden_state)
+        q_values = self.head(out[:, -1, :])
+        return q_values, next_hidden
