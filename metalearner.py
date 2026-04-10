@@ -327,18 +327,3 @@ class MetaLearner:
             self.logger.add('policy/value', run_stats[2].mean(), self.iter_idx)
             self.logger.add('encoder/latent_mean', torch.cat(self.policy_storage.latent_mean).mean(), self.iter_idx)
             self.logger.add('encoder/latent_logvar', torch.cat(self.policy_storage.latent_logvar).mean(), self.iter_idx)
-            # log the average weights and gradients of all models (where applicable)
-            for [model, name] in [
-                [self.policy.actor_critic, 'policy'],
-                [self.vae.encoder, 'encoder'],
-                [self.vae.reward_decoder, 'reward_decoder'],
-            ]:
-                if model is not None:
-                    param_list = list(model.parameters())
-                    param_mean = np.mean([param_list[i].data.cpu().numpy().mean() for i in range(len(param_list))])
-                    self.logger.add('weights/{}'.format(name), param_mean, self.iter_idx)
-                    if name == 'policy':
-                        self.logger.add('weights/policy_std', param_list[0].data.mean(), self.iter_idx)
-                    if param_list[0].grad is not None:
-                        param_grad_mean = np.mean([param_list[i].grad.cpu().numpy().mean() for i in range(len(param_list))])
-                        self.logger.add('gradients/{}'.format(name), param_grad_mean, self.iter_idx)
