@@ -10,31 +10,26 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class TBLogger:
     def __init__(self, args, exp_label):
-        self.output_name = exp_label + '_' + str(args.seed) + '_' + datetime.datetime.now().strftime('%m-%d_%H-%M-%S')
-        dir_path = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir))
-        dir_path = os.path.join(dir_path, 'logs')
-
-        if not os.path.exists(dir_path):
-            try:
-                os.mkdir(dir_path)
-            except:
-                dir_path_head, dir_path_tail = os.path.split(dir_path)
-                if len(dir_path_tail) == 0:
-                    dir_path_head, dir_path_tail = os.path.split(dir_path_head)
-                os.mkdir(dir_path_head)
-                os.mkdir(dir_path)
+        timestamp = datetime.datetime.now().strftime('%H_%M_%S__%d_%m')
+        dir_path = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir, 'logs'))
 
         try:
-            self.full_output_folder = os.path.join(os.path.join(dir_path, 'logs_{}'.format(args.env_name)), self.output_name)
-        except:
-            self.full_output_folder = os.path.join(os.path.join(dir_path, 'logs_{}'.format(args["env_name"])), self.output_name)
+            env_name = args.env_name
+            seed = args.seed
+            algo_name = getattr(args, 'algo_name', exp_label).lower()
+        except Exception:
+            env_name = args["env_name"]
+            seed = args["seed"]
+            algo_name = str(args.get("algo_name", exp_label)).lower()
+
+        self.output_name = f'{env_name}__{seed}__{timestamp}'
+        self.full_output_folder = os.path.join(dir_path, algo_name, self.output_name)
+        os.makedirs(self.full_output_folder, exist_ok=True)
 
         self.writer = SummaryWriter(log_dir=self.full_output_folder)
 
         print('logging under', self.full_output_folder)
 
-        if not os.path.exists(self.full_output_folder):
-            os.makedirs(self.full_output_folder)
         with open(os.path.join(self.full_output_folder, 'config.json'), 'w') as f:
             try:
                 config = {k: v for (k, v) in vars(args).items() if k != 'device'}

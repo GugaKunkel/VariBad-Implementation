@@ -1,3 +1,5 @@
+import datetime
+import os
 import random
 import time
 
@@ -35,7 +37,11 @@ class DQNLearner:
         self.vis_interval = args.vis_interval
         self.max_rollouts_per_task = args.max_rollouts_per_task
 
-        self.run_dir = f"runs/{args.env_name}__{self.seed}__{int(time.time())}"
+        timestamp = datetime.datetime.now().strftime("%H_%M_%S__%d_%m")
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        algo_name = getattr(args, "algo_name", "dqn").lower()
+        self.run_dir = os.path.join(project_root, "logs", algo_name, f"{args.env_name}__{self.seed}__{timestamp}")
+        os.makedirs(self.run_dir, exist_ok=True)
         self.writer = SummaryWriter(self.run_dir)
         self.writer.add_text(
             "hyperparameters",
