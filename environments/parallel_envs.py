@@ -17,7 +17,20 @@ def make_env(env_id, seed, rank, episodes_per_task, tasks, add_done_info, **kwar
     def _thunk():
         env = gym.make(env_id, **kwargs)
         if tasks is not None:
-            env.unwrapped.reset_task = lambda x: env.unwrapped.set_task(random.choice(tasks))
+            original_reset_task = getattr(env.unwrapped, "reset_task", None)
+            set_task_fn = getattr(env.unwrapped, "set_task", None)
+
+            def _reset_task(task=None):
+                chosen_task = random.choice(tasks) if task is None else task
+                if set_task_fn is not None:
+                    return set_task_fn(chosen_task)
+                if original_reset_task is not None:
+                    return original_reset_task(chosen_task)
+                raise AttributeError(
+                    f"{type(env.unwrapped).__name__} has neither set_task nor reset_task(task)."
+                )
+
+            env.unwrapped.reset_task = _reset_task
         if seed is not None:
             env_seed = seed + rank
             try:
