@@ -43,6 +43,9 @@ class VaribadVAE:
             num_states=self.args.num_states,
         ).to(device)
         
+        if self.args.disable_decoder:
+            self.reward_decoder = None
+        
         # initialise rollout storage for the VAE update (this differs from the data that the on-policy RL algorithm uses)
         self.rollout_storage = RolloutStorageVAE(num_processes=self.args.num_processes,
                                                 max_trajectory_len=self.args.max_trajectory_len,
@@ -52,7 +55,11 @@ class VaribadVAE:
                                                 )
         
         # initalise optimiser for the encoder and decoders
-        self.optimiser_vae = torch.optim.Adam([*self.encoder.parameters(), *self.reward_decoder.parameters()], lr=self.args.lr_vae)
+        decoder_params = []
+        if not self.args.disable_decoder:
+            if self.args.decode_reward:
+                decoder_params.extend(self.reward_decoder.parameters())
+        self.optimiser_vae = torch.optim.Adam([*self.encoder.parameters(), *decoder_params], lr=self.args.lr_vae)
     
     def compute_rew_reconstruction_loss(self, latent, next_obs, reward, return_predictions=False):
         """ Compute reward reconstruction loss. (No reduction of loss along batch dimension is done here; sum/avg has to be done outside) """
@@ -133,13 +140,19 @@ class VaribadVAE:
         
         # compute the KL term for each ELBO term of the current trajectory
         # shape: [num_elbo_terms] x [num_trajectories]
-        kl_loss = self.compute_kl_loss(latent_mean, latent_logvar)
-        kl_loss = (kl_loss * elbo_mask.float()).sum(dim=0).mean()
+        if not self.args.disable_kl_term:
+            kl_loss = self.compute_kl_loss(latent_mean, latent_logvar)
+            kl_loss = (kl_loss * elbo_mask.float()).sum(dim=0).mean()
+        else:
+            kl_loss = 0
         return rew_reconstruction_loss, kl_loss
 
     def compute_vae_loss(self, update=False, pretrain_index=None):
         """ Returns the VAE loss """
         if not self.rollout_storage.ready_for_update():
+            return 0
+        
+        if self.args.disable_decoder and self.args.disable_kl_term:
             return 0
         
         # get a mini-batch. vae_next_obs will be of size: max trajectory len x num trajectories x dimension of observations

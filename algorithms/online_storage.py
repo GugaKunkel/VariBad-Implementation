@@ -26,6 +26,11 @@ class OnlineStorage(object):
         
         # hidden states of RNN (necessary if we want to re-compute embeddings)
         self.hidden_states = torch.zeros(num_steps + 1, num_processes, hidden_size)
+        
+        # next_state will include s_N when state was reset, skipping s_0
+        # (only used if we need to re-compute embeddings after backpropagating RL loss through encoder)
+        self.next_state = torch.zeros(num_steps, num_processes, state_dim)
+            
         if self.args.pass_belief_to_policy:
             self.beliefs = torch.zeros(num_steps + 1, num_processes, belief_dim)
         else:
@@ -34,6 +39,7 @@ class OnlineStorage(object):
         # rewards and end of episodes
         self.rewards_raw = torch.zeros(num_steps, num_processes, 1)
         self.rewards_normalised = torch.zeros(num_steps, num_processes, 1)
+        self.done = torch.zeros(num_steps + 1, num_processes, 1)
         self.masks = torch.ones(num_steps + 1, num_processes, 1)
         
         # actions
@@ -46,15 +52,18 @@ class OnlineStorage(object):
         self.to_device()
     
     def to_device(self):
-        self.prev_state = self.prev_state.to(device)
+        if self.args.pass_state_to_policy:
+            self.prev_state = self.prev_state.to(device)
         self.latent_samples = [t.to(device) for t in self.latent_samples]
         self.latent_mean = [t.to(device) for t in self.latent_mean]
         self.latent_logvar = [t.to(device) for t in self.latent_logvar]
         self.hidden_states = self.hidden_states.to(device)
+        self.next_state = self.next_state.to(device)
         if self.args.pass_belief_to_policy:
             self.beliefs = self.beliefs.to(device)
         self.rewards_raw = self.rewards_raw.to(device)
         self.rewards_normalised = self.rewards_normalised.to(device)
+        self.done = self.done.to(device)
         self.masks = self.masks.to(device)
         self.value_preds = self.value_preds.to(device)
         self.returns = self.returns.to(device)
@@ -68,6 +77,7 @@ class OnlineStorage(object):
                 rewards_normalised,
                 value_preds,
                 masks,
+                done,
                 hidden_states=None,
                 latent_sample=None,
                 latent_mean=None,
@@ -88,6 +98,7 @@ class OnlineStorage(object):
         else:
             self.value_preds[self.step].copy_(value_preds.detach())
         self.masks[self.step + 1].copy_(masks)
+        self.done[self.step + 1].copy_(done)
         self.step = (self.step + 1) % self.num_steps
     
     def after_update(self):
@@ -98,6 +109,7 @@ class OnlineStorage(object):
         self.latent_mean = []
         self.latent_logvar = []
         self.hidden_states[0].copy_(self.hidden_states[-1])
+        self.done[0].copy_(self.done[-1])
         self.masks[0].copy_(self.masks[-1])
         self.action_log_probs = None
     
@@ -111,7 +123,7 @@ class OnlineStorage(object):
             self.returns[step] = gae + self.value_preds[step]
     
     def before_update(self, policy):
-        latent = utl.get_latent_for_policy(latent_sample=torch.stack(self.latent_samples[:-1]),
+        latent = utl.get_latent_for_policy(args=self.args, latent_sample=torch.stack(self.latent_samples[:-1]),
                                             latent_mean=torch.stack(self.latent_mean[:-1]),
                                             latent_logvar=torch.stack(self.latent_logvar[:-1]))
         _, action_log_probs, _ = policy.evaluate_actions(self.prev_state[:-1],
@@ -132,7 +144,10 @@ class OnlineStorage(object):
         mini_batch_size = batch_size // num_mini_batch
         sampler = BatchSampler(SubsetRandomSampler(range(batch_size)), mini_batch_size, drop_last=True)
         for indices in sampler:
-            state_batch = self.prev_state[:-1].reshape(-1, *self.prev_state.size()[2:])[indices]
+            if self.args.pass_state_to_policy:
+                state_batch = self.prev_state[:-1].reshape(-1, *self.prev_state.size()[2:])[indices]
+            else:
+                state_batch = None
             latent_sample_batch = torch.cat(self.latent_samples[:-1])[indices]
             latent_mean_batch = torch.cat(self.latent_mean[:-1])[indices]
             latent_logvar_batch = torch.cat(self.latent_logvar[:-1])[indices]

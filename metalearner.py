@@ -62,6 +62,7 @@ class MetaLearner:
         policy_net = Policy(
             args=self.args,
             # input
+            pass_state_to_policy=self.args.pass_state_to_policy,
             pass_belief_to_policy=self.args.pass_belief_to_policy,
             dim_state=self.args.state_dim,
             dim_latent=self.args.latent_dim * 2,
@@ -80,6 +81,7 @@ class MetaLearner:
             ppo_epoch=self.args.ppo_num_epochs,
             num_mini_batch=self.args.ppo_num_minibatch,
             clip_param=self.args.ppo_clip_param,
+            optimiser_vae=self.vae.optimiser_vae,
         )
         return policy
     
@@ -114,6 +116,7 @@ class MetaLearner:
                 # sample actions from policy
                 with torch.no_grad():
                     value, action = utl.select_action(
+                        args=self.args,
                         policy=self.policy,
                         state=prev_state,
                         belief=belief,
@@ -142,11 +145,14 @@ class MetaLearner:
                 
                 # before resetting, update the embedding and add to vae buffer
                 # (last state might include useful task info)
-                self.vae.rollout_storage.insert(action.detach().clone(),
-                                                next_state.clone(),
-                                                rew_raw.clone(),
-                                                done.clone())
-                
+                if not (self.args.disable_decoder and self.args.disable_kl_term):
+                    self.vae.rollout_storage.insert(action.detach().clone(),
+                                                    next_state.clone(),
+                                                    rew_raw.clone(),
+                                                    done.clone())
+                    
+                # add the obs before reset to the policy storage
+                self.policy_storage.next_state[step] = next_state.clone()
                 # reset environments that are done
                 done_indices = np.argwhere(done.cpu().flatten()).flatten()
                 if len(done_indices) > 0:
@@ -161,6 +167,7 @@ class MetaLearner:
                     rewards_normalised=rew_normalised,
                     value_preds=value,
                     masks=masks_done,
+                    done=done,
                     hidden_states=hidden_state.squeeze(0),
                     latent_sample=latent_sample,
                     latent_mean=latent_mean,
@@ -219,7 +226,7 @@ class MetaLearner:
         return latent_sample, latent_mean, latent_logvar, hidden_state
     
     def get_value(self, state, belief, latent_sample, latent_mean, latent_logvar):
-        latent = utl.get_latent_for_policy(latent_sample=latent_sample, latent_mean=latent_mean, latent_logvar=latent_logvar)
+        latent = utl.get_latent_for_policy(args=self.args, latent_sample=latent_sample, latent_mean=latent_mean, latent_logvar=latent_logvar)
         return self.policy.actor_critic.get_value(state=state, belief=belief, latent=latent).detach()
     
     def update(self, state, belief, latent_sample, latent_mean, latent_logvar):
@@ -241,7 +248,9 @@ class MetaLearner:
             # update agent (this will also call the VAE update!)
             policy_train_stats = self.policy.update(
                 policy_storage=self.policy_storage,
-                compute_vae_loss=self.vae.compute_vae_loss)
+                compute_vae_loss=self.vae.compute_vae_loss,
+                encoder=self.vae.encoder,
+                rlloss_through_encoder=self.args.rlloss_through_encoder,)
         else:
             policy_train_stats = 0, 0, 0, 0
             

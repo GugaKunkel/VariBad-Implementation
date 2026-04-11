@@ -15,10 +15,15 @@ def get_args(rest_args):
     # --- POLICY ---
 
     # using separate encoders for the different inputs ("None" uses no encoder)
+    parser.add_argument('--pass_state_to_policy', type=boolean_argument, default=True, help='condition policy on state')
+    parser.add_argument('--pass_latent_to_policy', type=boolean_argument, default=True, help='condition policy on VAE latent')
     parser.add_argument('--pass_belief_to_policy', type=boolean_argument, default=False, help='condition policy on ground-truth belief')
     parser.add_argument('--policy_state_embedding_dim', type=int, default=16)
     parser.add_argument('--policy_latent_embedding_dim', type=int, default=16)
     parser.add_argument('--policy_belief_embedding_dim', type=int, default=None)
+    parser.add_argument('--norm_state_for_policy', type=boolean_argument, default=True, help='normalise state input')
+    parser.add_argument('--norm_latent_for_policy', type=boolean_argument, default=True, help='normalise latent input')
+    parser.add_argument('--norm_belief_for_policy', type=boolean_argument, default=True, help='normalise belief input')
 
     # PPO specific
     parser.add_argument('--ppo_num_epochs', type=int, default=2, help='number of epochs per PPO update')
@@ -55,8 +60,16 @@ def get_args(rest_args):
                         help='how many VAE update steps to take per meta-iteration')
     parser.add_argument('--pretrain_len', type=int, default=0, help='for how many updates to pre-train the VAE')
     parser.add_argument('--kl_weight', type=float, default=0.01, help='weight for the KL term')
+    parser.add_argument('--add_nonlinearity_to_latent', type=boolean_argument, default=False,
+                    help='Use relu before feeding latent to policy')
+    parser.add_argument('--rlloss_through_encoder', type=boolean_argument, default=False,
+                        help='backprop rl loss through encoder')
+    parser.add_argument('--disable_kl_term', type=boolean_argument, default=False,
+                        help='dont use the KL regularising loss term')
 
     # - encoder
+    parser.add_argument('--disable_decoder', type=boolean_argument, default=False,
+                    help='train without decoder')
     parser.add_argument('--action_embedding_size', type=int, default=0)
     parser.add_argument('--state_embedding_size', type=int, default=8)
     parser.add_argument('--reward_embedding_size', type=int, default=8)
@@ -64,13 +77,13 @@ def get_args(rest_args):
     parser.add_argument('--latent_dim', type=int, default=5, help='dimensionality of latent space')
 
     # - decoder: rewards
+    parser.add_argument('--decode_reward', type=boolean_argument, default=True, help='use reward decoder')
     parser.add_argument('--reward_decoder_layers', nargs='+', type=int, default=[32, 32])
     parser.add_argument('--rew_pred_type', type=str, default='bernoulli',
                         help='choose: '
                              'bernoulli (predict p(r=1|s))'
                              'categorical (predict p(r=1|s) but use softmax instead of sigmoid)'
                              'deterministic (treat as regression problem)')
-
     # --- OTHERS ---
 
     # logging, saving, evaluation

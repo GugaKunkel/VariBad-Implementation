@@ -5,7 +5,7 @@ import argparse
 from configs import args_grid_varibad, args_grid_dqn, args_grid_rl2
 from metalearner import MetaLearner
 from dqn_learner import DQNLearner
-from rl2_learner import RL2Learner
+# from rl2_learner import RL2Learner
 
 def main(experiment: str, rest_args=None):
     experiment = experiment.lower()
@@ -22,8 +22,13 @@ def main(experiment: str, rest_args=None):
     elif experiment == "rl2":
         args = args_grid_rl2.get_args(rest_args)
         args.algo_name = "rl2"
-        learner = RL2Learner(args)
+        # clean up arguments
+        if args.disable_decoder:
+            args.decode_reward = False
+        learner = MetaLearner(args)
         learner.train()
+        # learner = RL2Learner(args)
+        # learner.train()
     else:
         raise ValueError(f"Unknown experiment '{experiment}'. Use 'varibad', 'dqn', or 'rl2'.")
 

@@ -69,8 +69,9 @@ class RL2Learner:
 
         timestamp = datetime.datetime.now().strftime("%H_%M_%S__%d_%m")
         project_root = os.path.dirname(os.path.abspath(__file__))
+        base_log_dir = args.results_log_dir if getattr(args, "results_log_dir", None) else os.path.join(project_root, "logs")
         algo_name = getattr(args, "algo_name", "rl2").lower()
-        self.run_dir = os.path.join(project_root, "logs", algo_name, f"{args.env_name}__{self.seed}__{timestamp}")
+        self.run_dir = os.path.join(base_log_dir, algo_name, f"{args.env_name}__{self.seed}__{timestamp}")
         os.makedirs(self.run_dir, exist_ok=True)
         self.writer = SummaryWriter(self.run_dir)
         self.writer.add_text(
@@ -79,6 +80,7 @@ class RL2Learner:
         )
 
         utl.seed(args.seed)
+        self._print_varibad_alignment_report()
 
         self.envs = make_vec_envs(
             env_name=args.env_name,
@@ -101,6 +103,36 @@ class RL2Learner:
         self.frames = 0
         self.hidden_state = self.policy.zero_hidden(args.num_processes)
         self._rollout_count = 0
+
+    def _print_varibad_alignment_report(self):
+        expected = {
+            "max_rollouts_per_task": 4,
+            "num_processes": 16,
+            "policy_num_steps": 60,
+            "lr_policy": 7e-4,
+            "policy_gamma": 0.95,
+            "policy_tau": 0.95,
+            "policy_value_loss_coef": 0.5,
+            "policy_entropy_coef": 0.01,
+            "policy_max_grad_norm": 0.5,
+            "reset_task_on_episode": False,
+        }
+        mismatches = []
+        for k, v in expected.items():
+            if hasattr(self.args, k) and getattr(self.args, k) != v:
+                mismatches.append((k, getattr(self.args, k), v))
+
+        if mismatches:
+            print("[RL2] VariBAD-config alignment check: some key defaults differ:")
+            for key, got, want in mismatches:
+                print(f"[RL2]   {key}: current={got} | VariBAD-RL2-default={want}")
+        else:
+            print("[RL2] VariBAD-config alignment check: key RL2 defaults match.")
+
+        print(
+            "[RL2] Note: this implementation is a standalone recurrent actor-critic; "
+            "VariBAD's original RL2 uses its latent-encoder + PPO training stack."
+        )
 
     def _format_obs_for_policy(self, obs_t, prev_done):
         # Train env may include done-info in obs (via VariBadWrapper); eval env may not.

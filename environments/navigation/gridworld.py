@@ -254,7 +254,7 @@ class GridNavi(gym.Env):
                     episode_prev_obs[episode_idx].append(state.clone())
 
                 # act
-                _, action = utl.select_action(policy=policy,
+                _, action = utl.select_action(args=args, policy=policy,
                                                  state=state.view(-1),
                                                  belief=belief,
                                                  deterministic=True,
@@ -409,7 +409,7 @@ def plot_bb(env, args, episode_all_obs, episode_goals, reward_decoder,
             # plot the behaviour
             plot_behaviour(env, curr_obs, curr_goal)
 
-            if episode_latent_means is not None:
+            if reward_decoder is not None:
                 # visualise belief in env
                 rm, rv = compute_beliefs(args,
                                          reward_decoder,
@@ -430,7 +430,7 @@ def plot_bb(env, args, episode_all_obs, episode_goals, reward_decoder,
             if step_idx == 0:
                 plt.ylabel('Episode {}'.format(episode_idx + 1))
 
-    if episode_latent_means is not None:
+    if reward_decoder is not None:
         rew_pred_means = [torch.stack(r) for r in rew_pred_means]
         rew_pred_vars = [torch.stack(r) for r in rew_pred_vars]
 

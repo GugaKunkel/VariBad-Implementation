@@ -2,10 +2,12 @@ import os
 import pickle
 import random
 from distutils.util import strtobool
+import warnings
 
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -38,9 +40,9 @@ def env_step(env, action, args):
     return [next_obs, belief], reward, terminated, truncated, infos
 
 
-def select_action(policy, deterministic, state=None, belief=None, latent_sample=None, latent_mean=None, latent_logvar=None):
+def select_action(args, policy, deterministic, state=None, belief=None, latent_sample=None, latent_mean=None, latent_logvar=None):
     """ Select action using the policy. """
-    latent = get_latent_for_policy(latent_sample=latent_sample, latent_mean=latent_mean, latent_logvar=latent_logvar)
+    latent = get_latent_for_policy(args=args, latent_sample=latent_sample, latent_mean=latent_mean, latent_logvar=latent_logvar)
     action = policy.act(state=state, latent=latent, belief=belief, deterministic=deterministic)
     if isinstance(action, list) or isinstance(action, tuple):
         value, action = action
@@ -50,10 +52,14 @@ def select_action(policy, deterministic, state=None, belief=None, latent_sample=
     return value, action
 
 
-def get_latent_for_policy(latent_sample=None, latent_mean=None, latent_logvar=None):
+def get_latent_for_policy(args, latent_sample=None, latent_mean=None, latent_logvar=None):
     if (latent_sample is None) and (latent_mean is None) and (latent_logvar is None):
         return None
     
+    if args.add_nonlinearity_to_latent:
+        latent_sample = F.relu(latent_sample)
+        latent_mean = F.relu(latent_mean)
+        latent_logvar = F.relu(latent_logvar)
     latent = torch.cat((latent_mean, latent_logvar), dim=-1)
     
     if latent.shape[0] == 1:
@@ -74,6 +80,60 @@ def update_encoding(encoder, next_obs, action, reward, done, hidden_state):
                                                                             hidden_state=hidden_state,
                                                                             return_prior=False)
     return latent_sample, latent_mean, latent_logvar, hidden_state
+
+def recompute_embeddings(
+        policy_storage,
+        encoder,
+        sample,
+        update_idx,
+        detach_every
+):
+    # get the prior
+    latent_sample = [policy_storage.latent_samples[0].detach().clone()]
+    latent_mean = [policy_storage.latent_mean[0].detach().clone()]
+    latent_logvar = [policy_storage.latent_logvar[0].detach().clone()]
+
+    latent_sample[0].requires_grad = True
+    latent_mean[0].requires_grad = True
+    latent_logvar[0].requires_grad = True
+
+    # loop through experience and update hidden state
+    # (we need to loop because we sometimes need to reset the hidden state)
+    h = policy_storage.hidden_states[0].detach()
+    for i in range(policy_storage.actions.shape[0]):
+        # reset hidden state of the GRU when we reset the task
+        h = encoder.reset_hidden(h, policy_storage.done[i + 1])
+
+        ts, tm, tl, h = encoder(policy_storage.actions.float()[i:i + 1],
+                                policy_storage.next_state[i:i + 1],
+                                policy_storage.rewards_raw[i:i + 1],
+                                h,
+                                sample=sample,
+                                return_prior=False,
+                                detach_every=detach_every
+                                )
+
+        # print(i, reset_task.sum())
+        # print(i, (policy_storage.latent_mean[i + 1] - tm).sum())
+        # print(i, (policy_storage.latent_logvar[i + 1] - tl).sum())
+        # print(i, (policy_storage.hidden_states[i + 1] - h).sum())
+
+        latent_sample.append(ts)
+        latent_mean.append(tm)
+        latent_logvar.append(tl)
+
+    if update_idx == 0:
+        try:
+            assert (torch.cat(policy_storage.latent_mean) - torch.cat(latent_mean)).sum() == 0
+            assert (torch.cat(policy_storage.latent_logvar) - torch.cat(latent_logvar)).sum() == 0
+        except AssertionError:
+            warnings.warn('You are not recomputing the embeddings correctly!')
+            import pdb
+            pdb.set_trace()
+
+    policy_storage.latent_samples = latent_sample
+    policy_storage.latent_mean = latent_mean
+    policy_storage.latent_logvar = latent_logvar
 
 
 class FeatureExtractor(nn.Module):
