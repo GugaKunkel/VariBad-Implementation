@@ -1,23 +1,27 @@
-# VariBad Implementation
+# VariBAD Implementation
 
-A meta-learning implementation exploring variational Bayesian approaches.
+Compact implementation of meta-RL experiments for GridNavi, including VariBAD, RL2-style training, and DQN baselines.
 
-## Project Structure
+## Quick Start
 
-- `main.py` - Entry point
-- `metalearner.py` - Meta-learner implementation
-- `algorithms/` - RL algorithms (A2C, PPO)
-- `architecture/` - Neural network components (encoder, decoder, policy, VAE)
-- `gridworld/` - Gridworld environment
+1. Create and activate a Python environment (3.9+ recommended).
+2. Install dependencies used by your setup (core libs include `torch`, `gymnasium`, `numpy`, `matplotlib`, `seaborn`, and `tensorboard`).
 
-## Installation
+Run an experiment:
 
 ```bash
-pip install -r requirements.txt
+python main.py varibad
+python main.py rl2
+python main.py dqn
+python main.py varibad_lg
 ```
 
-## Usage
+## Repo Layout
 
-```bash
-python main.py
-```
+- `main.py` - experiment entrypoint
+- `metalearner.py` - main meta-learning training loop
+- `dqn_learner.py` - DQN baseline learner
+- `configs/` - experiment argument presets
+- `environments/` - GridNavi and environment utilities
+- `algorithms/` - PPO and rollout storage
+- `trained_models/` - saved checkpoints
