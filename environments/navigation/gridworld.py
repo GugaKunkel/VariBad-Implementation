@@ -1,5 +1,6 @@
 import itertools
 import math
+import os
 import random
 from torch.nn import functional as F
 
@@ -17,12 +18,14 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 class GridNavi(gym.Env):
-    def __init__(self, num_cells=5, num_steps=15):
+    def __init__(self, num_cells=5, num_steps=15, lava_positions=None, lava_penalty=-1.0):
         super(GridNavi, self).__init__()
         self.seed()
         self.num_cells = num_cells
         self.num_states = num_cells ** 2
         self.num_tasks = self.num_states
+        self.lava_positions = set(tuple(map(int, p)) for p in (lava_positions or []))
+        self.lava_penalty = float(lava_penalty)
         
         self._max_episode_steps = num_steps
         self.step_count = 0
@@ -34,7 +37,7 @@ class GridNavi(gym.Env):
         )
         self.action_space = spaces.Discrete(5)  # noop, up, right, down, left
         self.task_dim = 2
-        self.belief_dim = 25
+        self.belief_dim = self.num_states
         
         # possible starting states
         self.starting_state = (0.0, 0.0)
@@ -45,6 +48,9 @@ class GridNavi(gym.Env):
         self.possible_goals.remove((0, 1))
         self.possible_goals.remove((1, 1))
         self.possible_goals.remove((1, 0))
+        self.possible_goals = [g for g in self.possible_goals if g not in self.lava_positions]
+        if len(self.possible_goals) == 0:
+            raise ValueError("No valid goals remain after lava filtering.")
         
         # reset the environment state
         self._env_state = np.array(self.starting_state, dtype=np.float32)
@@ -64,7 +70,10 @@ class GridNavi(gym.Env):
         if task is None:
             self._goal = np.array(random.choice(self.possible_goals))
         else:
-            self._goal = np.array(task)
+            task_tuple = tuple(map(int, task))
+            if task_tuple not in self.possible_goals:
+                raise ValueError(f"Task {task_tuple} is not a valid goal for this environment.")
+            self._goal = np.array(task_tuple)
         self._reset_belief()
         return self._goal
     
@@ -140,6 +149,8 @@ class GridNavi(gym.Env):
         # compute reward
         if self._env_state[0] == self._goal[0] and self._env_state[1] == self._goal[1]:
             reward = 1.0
+        elif tuple(map(int, self._env_state.tolist())) in self.lava_positions:
+            reward = self.lava_penalty
         else:
             reward = -0.1
         
@@ -149,7 +160,8 @@ class GridNavi(gym.Env):
         task_id = self.task_to_id(task)
         info = {'task': task,
                 'task_id': task_id,
-                'belief': self.get_belief()}
+                'belief': self.get_belief(),
+                'in_lava': tuple(map(int, self._env_state.tolist())) in self.lava_positions}
         return state.astype(np.float32, copy=False), reward, terminated, truncated, info
     
     def task_to_id(self, goals):
@@ -381,11 +393,18 @@ def plot_bb(env, args, episode_all_obs, episode_goals, reward_decoder,
     """
     Plot behaviour and belief.
     """
-
-    plt.figure(figsize=(1.5 * env._max_episode_steps, 1.5 * args.max_rollouts_per_task))
-
+    num_cells = int(env.observation_space.high[0] + 1)
     num_episodes = len(episode_all_obs)
     num_steps = len(episode_all_obs[0])
+    # Wrap behaviour panels after t=10 so long horizons remain readable.
+    wrap_after_t = 10
+    cols_per_row = min(num_steps, wrap_after_t + 1)
+    rows_per_episode = int(math.ceil(num_steps / cols_per_row))
+    total_rows = num_episodes * rows_per_episode
+
+    # Slightly larger plots for dense grids (e.g., 16x16 lava map).
+    subplot_scale = max(1.55, num_cells / 10.0)
+    plt.figure(figsize=(subplot_scale * cols_per_row, subplot_scale * total_rows))
 
     rew_pred_means = [[] for _ in range(num_episodes)]
     rew_pred_vars = [[] for _ in range(num_episodes)]
@@ -402,9 +421,11 @@ def plot_bb(env, args, episode_all_obs, episode_goals, reward_decoder,
                 curr_logvars = episode_latent_logvars[episode_idx][:step_idx + 1]
 
             # choose correct subplot
-            plt.subplot(args.max_rollouts_per_task,
-                        math.ceil(env._max_episode_steps) + 1,
-                        1 + episode_idx * (1 + math.ceil(env._max_episode_steps)) + step_idx),
+            local_row = step_idx // cols_per_row
+            local_col = step_idx % cols_per_row
+            subplot_row = episode_idx * rows_per_episode + local_row
+            subplot_idx = subplot_row * cols_per_row + local_col + 1
+            plt.subplot(total_rows, cols_per_row, subplot_idx)
 
             # plot the behaviour
             plot_behaviour(env, curr_obs, curr_goal)
@@ -427,7 +448,7 @@ def plot_bb(env, args, episode_all_obs, episode_goals, reward_decoder,
             if episode_idx == 0:
                 plt.title('t = {}'.format(step_idx))
 
-            if step_idx == 0:
+            if local_col == 0:
                 plt.ylabel('Episode {}'.format(episode_idx + 1))
 
     if reward_decoder is not None:
@@ -436,8 +457,10 @@ def plot_bb(env, args, episode_all_obs, episode_goals, reward_decoder,
 
     # save figure that shows policy behaviour
     plt.tight_layout()
+    save_dpi = 220 if num_cells >= 12 else 140
     if image_folder is not None:
-        plt.savefig('{}/{}_behaviour'.format(image_folder, iter_idx))
+        os.makedirs(image_folder, exist_ok=True)
+        plt.savefig('{}/{}_behaviour'.format(image_folder, iter_idx), dpi=save_dpi, bbox_inches='tight')
         plt.close()
     else:
         plt.show()
@@ -447,14 +470,17 @@ def plot_bb(env, args, episode_all_obs, episode_goals, reward_decoder,
 
 def plot_behaviour(env, observations, goal):
     num_cells = int(env.observation_space.high[0] + 1)
+    lava_positions = getattr(env, "lava_positions", set())
 
     # draw grid
     for i in range(num_cells):
         for j in range(num_cells):
             pos_i = i
             pos_j = j
-            rec = Rectangle((pos_i, pos_j), 1, 1, facecolor='none', alpha=0.5,
-                            edgecolor='k')
+            cell_is_lava = (i, j) in lava_positions
+            face_color = 'orange' if cell_is_lava else 'none'
+            face_alpha = 0.55 if cell_is_lava else 0.5
+            rec = Rectangle((pos_i, pos_j), 1, 1, facecolor=face_color, alpha=face_alpha, edgecolor='k')
             plt.gca().add_patch(rec)
 
     # shift obs and goal by half a stepsize
@@ -500,6 +526,7 @@ def plot_belief(env, beliefs):
 
     num_cells = int(env.observation_space.high[0] + 1)
     unwrapped_env = env.venv.unwrapped.envs[0]
+    lava_positions = getattr(unwrapped_env.unwrapped, "lava_positions", set())
 
     # draw probabilities for each grid cell
     alphas = []
@@ -509,7 +536,10 @@ def plot_belief(env, beliefs):
             pos_j = j
             idx = unwrapped_env.unwrapped.task_to_id(torch.tensor([[pos_i, pos_j]]))
             alpha = beliefs[idx]
-            alphas.append(alpha.item())
+            if (pos_i, pos_j) in lava_positions:
+                alphas.append(0.0)
+            else:
+                alphas.append(alpha.item())
     alphas = np.array(alphas)
     # cut off values (this only happens if we don't use sigmoid/softmax)
     alphas[alphas < 0] = 0
@@ -524,3 +554,64 @@ def plot_belief(env, beliefs):
                             edgecolor='k')
             plt.gca().add_patch(rec)
             count += 1
+
+    # draw lava again on top so it remains visible under belief overlays
+    for (x, y) in lava_positions:
+        rec = Rectangle((x, y), 1, 1, facecolor='orange', alpha=0.8, edgecolor='k')
+        plt.gca().add_patch(rec)
+
+
+def _build_lava_layout_11():
+    """
+    A fixed 11x11 lava layout with open borders and interior barriers.
+    """
+    lava = set()
+
+    # horizontal lava bands (with holes)
+    for x in range(2, 9):
+        if x not in {4, 7}:
+            lava.add((x, 3))
+    for x in range(2, 9):
+        if x not in {3, 6}:
+            lava.add((x, 6))
+    for x in range(2, 9):
+        if x not in {5}:
+            lava.add((x, 8))
+
+    # vertical lava bands (with holes)
+    for y in range(2, 9):
+        if y not in {3, 7}:
+            lava.add((4, y))
+    for y in range(2, 9):
+        if y not in {5}:
+            lava.add((7, y))
+
+    # keep the start region free
+    lava.discard((0, 0))
+    lava.discard((0, 1))
+    lava.discard((1, 0))
+    lava.discard((1, 1))
+    # keep an easy corridor on the left/top borders
+    for y in range(0, 11):
+        lava.discard((0, y))
+    for x in range(0, 11):
+        lava.discard((x, 10))
+    return lava
+
+
+class GridNaviLava11(GridNavi):
+    def __init__(self, num_cells=11, num_steps=30, lava_penalty=-1.0):
+        if num_cells != 11:
+            raise ValueError("GridNaviLava11 is designed for num_cells=11.")
+        super().__init__(
+            num_cells=num_cells,
+            num_steps=num_steps,
+            lava_positions=_build_lava_layout_11(),
+            lava_penalty=lava_penalty,
+        )
+
+
+# Backward-compatible alias: existing runs/commands might still reference Lava16.
+class GridNaviLava16(GridNaviLava11):
+    def __init__(self, num_cells=11, num_steps=30, lava_penalty=-1.0):
+        super().__init__(num_cells=num_cells, num_steps=num_steps, lava_penalty=lava_penalty)

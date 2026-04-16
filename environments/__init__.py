@@ -34,7 +34,19 @@ register(
 )
 
 register(
+    'GridNaviLava11-v0',
+    entry_point='environments.navigation.gridworld:GridNaviLava11',
+    kwargs={'num_cells': 11, 'num_steps': 30},
+)
+
+register(
+    'GridNaviLava16-v0',
+    entry_point='environments.navigation.gridworld:GridNaviLava16',
+    kwargs={'num_cells': 11, 'num_steps': 30},
+)
+
+register(
     'GridNaviLava32-v0',
-    entry_point='environments.navigation.gridworld_lava32:GridNaviLava32',
-    kwargs={'num_cells': 16, 'num_steps': 20},
+    entry_point='environments.navigation.gridworld:GridNaviLava16',
+    kwargs={'num_cells': 11, 'num_steps': 30},
 )

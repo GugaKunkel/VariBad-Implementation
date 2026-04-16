@@ -44,6 +44,36 @@ def _latest_run_dir(logs_root: str, algo_name: str) -> Optional[str]:
     return run_dirs[0]
 
 
+def _resolve_dir_path(path: Optional[str]) -> Optional[str]:
+    if path is None:
+        return None
+    expanded = os.path.expanduser(path)
+    candidates = []
+    if os.path.isabs(expanded):
+        candidates.append(expanded)
+    else:
+        repo_root = os.path.dirname(os.path.abspath(__file__))
+        candidates.append(os.path.join(os.getcwd(), expanded))
+        candidates.append(os.path.join(repo_root, expanded))
+        candidates.append(expanded)
+    for c in candidates:
+        if os.path.isdir(c):
+            return os.path.abspath(c)
+    return os.path.abspath(candidates[0])
+
+
+def _resolve_meta_checkpoint_layout(run_dir: str) -> Optional[str]:
+    # Supported layouts:
+    # 1) <run_dir>/models/policy.pt + encoder.pt
+    # 2) <run_dir>/policy.pt + encoder.pt
+    for candidate in [os.path.join(run_dir, "models"), run_dir]:
+        policy_path = os.path.join(candidate, "policy.pt")
+        encoder_path = os.path.join(candidate, "encoder.pt")
+        if os.path.isfile(policy_path) and os.path.isfile(encoder_path):
+            return candidate
+    return None
+
+
 def _load_run_config(run_dir: str) -> SimpleNamespace:
     cfg_path = os.path.join(run_dir, "config.json")
     cfg = {}
@@ -124,19 +154,27 @@ class DQNModel:
 
 
 def _load_meta_model(name: str, run_dir: Optional[str], logs_root: str) -> Optional[MetaModel]:
+    if run_dir is not None:
+        run_dir = _resolve_dir_path(run_dir)
     if run_dir is None:
         run_dir = _latest_run_dir(logs_root, name.lower())
     if run_dir is None:
         print(f"[{name}] No run directory found under logs.")
         return None
+    if not os.path.isdir(run_dir):
+        print(f"[{name}] Run directory not found: {run_dir}")
+        return None
 
-    model_dir = os.path.join(run_dir, "models")
+    model_dir = _resolve_meta_checkpoint_layout(run_dir)
+    if model_dir is None:
+        print(
+            f"[{name}] Missing policy/encoder checkpoint. "
+            f"Checked both '{os.path.join(run_dir, 'models')}' and '{run_dir}'."
+        )
+        return None
     policy_path = os.path.join(model_dir, "policy.pt")
     encoder_path = os.path.join(model_dir, "encoder.pt")
     reward_decoder_path = os.path.join(model_dir, "reward_decoder.pt")
-    if not (os.path.isfile(policy_path) and os.path.isfile(encoder_path)):
-        print(f"[{name}] Missing policy/encoder checkpoint in: {model_dir}")
-        return None
 
     policy = _safe_torch_load(policy_path).to(device).eval()
     encoder = _safe_torch_load(encoder_path).to(device).eval()
@@ -147,6 +185,8 @@ def _load_meta_model(name: str, run_dir: Optional[str], logs_root: str) -> Optio
             reward_decoder = maybe_decoder.to(device).eval()
     args = _load_run_config(run_dir)
     print(f"[{name}] Loaded run: {run_dir}")
+    if model_dir != os.path.join(run_dir, "models"):
+        print(f"[{name}] Using flat checkpoint layout in: {model_dir}")
     return MetaModel(
         name=name,
         run_dir=run_dir,
@@ -437,7 +477,7 @@ def main():
     parser.add_argument("--episodes_per_task", type=int, default=3)
     parser.add_argument("--seed", type=int, default=73)
 
-    parser.add_argument("--varibad_run", type=str, default=None, help="Path to a specific varibad run dir.")
+    parser.add_argument("--varibad_run", type=str, default="trained_models/small_grid_fulltrain/variBAD", help="Path to a specific varibad run dir.")
     parser.add_argument("--rl2_run", type=str, default=None, help="Path to a specific rl2 run dir.")
     parser.add_argument("--dqn_run", type=str, default=None, help="Path to a specific dqn run dir.")
     parser.add_argument("--dqn_checkpoint", type=str, default=None, help="Path to a specific DQN checkpoint (latest.pt).")
